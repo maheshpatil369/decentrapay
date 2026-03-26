@@ -1,5 +1,8 @@
+// ─── Pull from env, or fall back to the locally-deployed address ──────────────
+// deployment.json → address: "0x5FbDB2315678afecb367f032d93F642f64180aa3"
 export const CONTRACT_ADDRESS =
-  process.env.REACT_APP_CONTRACT_ADDRESS || "";
+  process.env.REACT_APP_CONTRACT_ADDRESS ||
+  "0x5FbDB2315678afecb367f032d93F642f64180aa3";
 
 export const CONTRACT_ABI = [
   {

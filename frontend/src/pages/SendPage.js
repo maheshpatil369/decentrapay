@@ -22,8 +22,16 @@ export default function SendPage() {
     return true;
   };
 
-  const submit = async (e) => { e.preventDefault(); if (!validate()) return; await execute(form); };
+const submit = async (e) => {
+  e.preventDefault();
+  if (!validate()) return;
 
+  await execute({
+    recipient: form.recipient,
+    amountEth: form.amount,
+    message: form.message
+  });
+};
   if (status === "confirmed") return (
     <div style={{ ...card, textAlign: "center", maxWidth: 480, margin: "40px auto" }}>
       <div style={{ fontSize: 52, marginBottom: 12 }}>✅</div>
@@ -42,7 +50,7 @@ export default function SendPage() {
   return (
     <div style={{ maxWidth: 480, margin: "0 auto" }}>
       <h1 style={{ fontSize: 24, marginBottom: 4 }}>Send ETH</h1>
-      <p style={{ color: "#6b7280", fontSize: 14, marginBottom: 24 }}>Transfer ETH via smart contract on Sepolia.</p>
+      <p style={{ color: "#6b7280", fontSize: 14, marginBottom: 24 }}>Transfer ETH via smart contract on Localhost.</p>
       <div style={card}>
         <form onSubmit={submit}>
           {[

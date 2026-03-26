@@ -33,13 +33,14 @@ contract DecentraPay {
         string  message,
         uint256 timestamp
     );
-    event SplitPayment(
-        address indexed initiator,
-        address[]       recipients,
-        uint256[]       amounts,
-        string          groupNote,
-        uint256         timestamp
-    );
+
+event SplitPayment(
+    address sender,
+    address payable[] recipients,
+    uint[] amounts,
+    string note,
+    uint timestamp
+);
 
     // ─── Custom Errors ────────────────────────────────────────────
     error ZeroValue();
