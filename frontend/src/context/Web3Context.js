@@ -207,32 +207,40 @@ export function Web3Provider({ children }) {
   }, []); // intentionally no deps — uses refs
 
   // ── Fetch on-chain history ─────────────────────────────────────────────────
-  const fetchHistory = useCallback(async (address) => {
-    const ct   = contractRef.current;
-    const prov = providerRef.current;
-    if (!ct || !prov) return [];
+const fetchHistory = useCallback(async (address) => {
+  const ct   = contractRef.current;
+  const prov = providerRef.current;
+  if (!ct || !prov) return [];
 
-    try {
-      const [sent, received] = await Promise.all([
-        ct.queryFilter(ct.filters.PaymentSent(address, null), -10000),
-        ct.queryFilter(ct.filters.PaymentSent(null, address), -10000),
-      ]);
-      return [...sent, ...received]
-        .sort((a, b) => b.blockNumber - a.blockNumber)
-        .map(e => ({
-          hash:      e.transactionHash,
-          from:      e.args.from,
-          to:        e.args.to,
-          amount:    ethers.formatEther(e.args.amount),
-          message:   e.args.message,
-          timestamp: Number(e.args.timestamp),
-          direction: e.args.from.toLowerCase() === address.toLowerCase() ? "out" : "in",
-        }));
-    } catch (err) {
-      console.error("[fetchHistory]", err);
-      return [];
-    }
-  }, []); // intentionally no deps — uses refs
+  try {
+    const currentBlock = await prov.getBlockNumber();
+
+    const events = await ct.queryFilter(
+      ct.filters.PaymentSent(),
+      0,                  // start from block 0
+      currentBlock        // to latest
+    );
+
+    return events
+      .filter(e =>
+        e.args.from.toLowerCase() === address.toLowerCase() ||
+        e.args.to.toLowerCase() === address.toLowerCase()
+      )
+      .sort((a, b) => b.blockNumber - a.blockNumber)
+      .map(e => ({
+        hash:      e.transactionHash,
+        from:      e.args.from,
+        to:        e.args.to,
+        amount:    ethers.formatEther(e.args.amount),
+        message:   e.args.message,
+        timestamp: Number(e.args.timestamp),
+        direction: e.args.from.toLowerCase() === address.toLowerCase() ? "out" : "in",
+      }));
+  } catch (err) {
+    console.error("[fetchHistory]", err);
+    return [];
+  }
+}, []);
 
   // ── Auto-reconnect MetaMask session ───────────────────────────────────────
   useEffect(() => {
