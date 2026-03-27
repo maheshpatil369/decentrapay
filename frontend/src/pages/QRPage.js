@@ -39,30 +39,38 @@ const handleScanValue = (value) => {
     alert("Invalid QR code");
   }
 };
-  const startScanner = async () => {
+const startScanner = async () => {
   setScanning(true);
 
-  const html5QrCode = new Html5Qrcode("qr-reader");
-  scannerRef.current = html5QrCode;
+  // wait for DOM render
+  setTimeout(async () => {
+    try {
+      const html5QrCode = new Html5Qrcode("qr-reader");
+      scannerRef.current = html5QrCode;
 
-  try {
-    await html5QrCode.start(
-      { facingMode: "environment" },
-      { fps: 10, qrbox: 250 },
-      (decodedText) => {
-        console.log("QR:", decodedText);
-        stopScanner();
-        handleScanValue(decodedText);
-      }
-    );
-  } catch (err) {
-    console.error("Camera error:", err);
-  }
+      await html5QrCode.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: 250 },
+        (decodedText) => {
+          console.log("QR:", decodedText);
+          stopScanner();
+          handleScanValue(decodedText);
+        }
+      );
+    } catch (err) {
+      console.error("Camera error:", err);
+      alert("Camera access failed");
+    }
+  }, 300); // ⬅️ KEY FIX
 };
 const stopScanner = async () => {
   if (scannerRef.current) {
-    await scannerRef.current.stop();
-    scannerRef.current.clear();
+    try {
+      await scannerRef.current.stop();
+      await scannerRef.current.clear();
+    } catch (e) {
+      console.log("Already stopped");
+    }
     setScanning(false);
   }
 };
