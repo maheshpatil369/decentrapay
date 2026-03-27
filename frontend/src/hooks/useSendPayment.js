@@ -8,16 +8,44 @@ export function useSendPayment() {
   const [receipt, setReceipt] = useState(null);
   const [error,   setError]   = useState(null);
 
-  const reset = () => { setStatus("idle"); setTxHash(null); setReceipt(null); setError(null); };
+  const reset = () => {
+    setStatus("idle");
+    setTxHash(null);
+    setReceipt(null);
+    setError(null);
+  };
 
   const execute = useCallback(async ({ recipient, amountEth, message }) => {
-    setError(null); setStatus("signing");
+    setError(null);
+    setStatus("signing");
+
     try {
       const tx = await sendPayment({ recipient, amountEth, message });
-      setTxHash(tx.hash); setStatus("pending");
-      const receipt = await tx.wait(1);
-      setReceipt(receipt); setStatus("confirmed");
-      await refreshBalance();
+
+      setTxHash(tx.hash);
+      setStatus("pending");
+
+const rcpt = await tx.wait(1);
+
+setReceipt(rcpt);
+setStatus("confirmed");
+
+// 🔥 SAVE TO LOCAL HISTORY
+const prev = JSON.parse(localStorage.getItem("txHistory")) || [];
+
+prev.unshift({
+  txHash: tx.hash,
+  recipient,
+  amount: amountEth,
+  message,
+  time: new Date().toISOString()
+});
+
+localStorage.setItem("txHistory", JSON.stringify(prev));
+
+// Refresh balance
+await refreshBalance();
+
     } catch (err) {
       setError(err?.reason || err?.message || "Transaction failed");
       setStatus("failed");

@@ -22,9 +22,6 @@ export function Web3Provider({ children }) {
   const [isConnecting, setIsConnecting] = useState(false);
   const [error,        setError]        = useState(null);
 
-  // ── Keep always-fresh refs so callbacks never capture stale state ──────────
-  // This fixes the "stale closure" bug where sendPayment/splitPayment/
-  // refreshBalance captured null contract/provider/account values.
   const contractRef = useRef(null);
   const providerRef = useRef(null);
   const accountRef  = useRef(null);
@@ -35,13 +32,11 @@ export function Web3Provider({ children }) {
   useEffect(() => { accountRef.current  = account;  }, [account]);
   useEffect(() => { signerRef.current   = signer;   }, [signer]);
 
-  // ── helpers ────────────────────────────────────────────────────────────────
   const clearError = () => setError(null);
 
   const refreshBalance = useCallback(async (addrArg, provArg) => {
-    // Accept explicit args OR fall back to the always-fresh refs
-    const addr = addrArg  ?? accountRef.current;
-    const prov = provArg  ?? providerRef.current;
+    const addr = addrArg ?? accountRef.current;
+    const prov = provArg ?? providerRef.current;
     if (!addr || !prov) return;
     try {
       const raw = await prov.getBalance(addr);
@@ -108,7 +103,6 @@ export function Web3Provider({ children }) {
 
       const jsonProv = new ethers.JsonRpcProvider(RPC_URL);
 
-      // Validate the RPC is reachable before continuing
       try {
         await jsonProv.getBlockNumber();
       } catch {
@@ -122,7 +116,6 @@ export function Web3Provider({ children }) {
       const net  = await jsonProv.getNetwork();
       const ct   = attachContract(sign);
 
-      // Check balance and warn if zero
       const raw = await jsonProv.getBalance(sign.address);
       const bal = ethers.formatEther(raw);
       if (parseFloat(bal) === 0) {
@@ -161,7 +154,6 @@ export function Web3Provider({ children }) {
   }, []);
 
   // ── Send payment ───────────────────────────────────────────────────────────
-  // Uses refs instead of closure-captured state to avoid stale null values.
   const sendPayment = useCallback(async ({ recipient, amountEth, message = "" }) => {
     const ct   = contractRef.current;
     const sign = signerRef.current;
@@ -171,7 +163,6 @@ export function Web3Provider({ children }) {
     const amt = parseFloat(amountEth);
     if (isNaN(amt) || amt <= 0) throw new Error("Amount must be > 0");
 
-    // Check balance before sending to give a friendlier error
     const prov = providerRef.current;
     const addr = accountRef.current;
     if (prov && addr) {
@@ -189,7 +180,7 @@ export function Web3Provider({ children }) {
     const value = ethers.parseEther(amountEth.toString());
     const tx    = await ct.sendPayment(recipient, message, { value });
     return tx;
-  }, []); // intentionally no deps — uses refs
+  }, []);
 
   // ── Split payment ──────────────────────────────────────────────────────────
   const splitPayment = useCallback(async ({ recipients, amounts, groupNote = "" }) => {
@@ -204,43 +195,81 @@ export function Web3Provider({ children }) {
 
     const tx = await ct.splitPayment(recipients, parsedAmounts, groupNote, { value: total });
     return tx;
-  }, []); // intentionally no deps — uses refs
+  }, []);
 
   // ── Fetch on-chain history ─────────────────────────────────────────────────
-const fetchHistory = useCallback(async (address) => {
-  const ct   = contractRef.current;
-  const prov = providerRef.current;
-  if (!ct || !prov) return [];
+  // ROOT CAUSE OF BUG:
+  //   iface.parseLog() returns only decoded args — it does NOT have .transactionHash.
+  //   That field only exists on the raw log object.
+  //   Old code did `e.transactionHash` on the parsed result → always undefined.
+  //   Fix: keep rawLog and parsed result paired; read hash from rawLog.
+  const fetchHistory = useCallback(async (address) => {
+    const prov = providerRef.current;
+    if (!prov) return [];
 
-  try {
-    const currentBlock = await prov.getBlockNumber();
+    try {
+      const iface = new ethers.Interface(CONTRACT_ABI);
 
-    const events = await ct.queryFilter(
-      ct.filters.PaymentSent(),
-      0,                  // start from block 0
-      currentBlock        // to latest
-    );
+      // Compute topic0 = keccak256("PaymentSent(address,address,uint256,string,uint256)")
+      // This filters at the node so only PaymentSent logs come back.
+      const topic0 = ethers.id("PaymentSent(address,address,uint256,string,uint256)");
 
-    return events
-      .filter(e =>
-        e.args.from.toLowerCase() === address.toLowerCase() ||
-        e.args.to.toLowerCase() === address.toLowerCase()
-      )
-      .sort((a, b) => b.blockNumber - a.blockNumber)
-      .map(e => ({
-        hash:      e.transactionHash,
-        from:      e.args.from,
-        to:        e.args.to,
-        amount:    ethers.formatEther(e.args.amount),
-        message:   e.args.message,
-        timestamp: Number(e.args.timestamp),
-        direction: e.args.from.toLowerCase() === address.toLowerCase() ? "out" : "in",
-      }));
-  } catch (err) {
-    console.error("[fetchHistory]", err);
-    return [];
-  }
-}, []);
+      const rawLogs = await prov.getLogs({
+        address:   CONTRACT_ADDRESS,
+        topics:    [topic0],
+        fromBlock: 0,
+        toBlock:   "latest",
+      });
+
+      console.log(`[fetchHistory] raw PaymentSent logs: ${rawLogs.length}`);
+
+      const results = [];
+
+      for (const rawLog of rawLogs) {
+        try {
+          // Parse only topics + data; the decoded result has args but NO transactionHash.
+          const parsed = iface.parseLog({
+            topics: rawLog.topics,
+            data:   rawLog.data,
+          });
+
+          if (!parsed) continue;
+
+          // args by position (safer than by name for some ethers versions)
+          const from = parsed.args[0];  // address indexed
+          const to   = parsed.args[1];  // address indexed
+          const amt  = parsed.args[2];  // uint256
+          const msg  = parsed.args[3];  // string
+          const ts   = parsed.args[4];  // uint256
+
+          const isMe =
+            from.toLowerCase() === address.toLowerCase() ||
+            to.toLowerCase()   === address.toLowerCase();
+
+          if (!isMe) continue;
+
+          results.push({
+            hash:      rawLog.transactionHash,   // ← MUST come from rawLog
+            from,
+            to,
+            amount:    ethers.formatEther(amt),
+            message:   msg,
+            timestamp: Number(ts),
+            direction: from.toLowerCase() === address.toLowerCase() ? "out" : "in",
+          });
+        } catch (parseErr) {
+          console.warn("[fetchHistory] skipping unparseable log:", parseErr.message);
+        }
+      }
+
+      console.log(`[fetchHistory] results for ${address.slice(0,8)}: ${results.length}`);
+      return results.sort((a, b) => b.timestamp - a.timestamp);
+
+    } catch (err) {
+      console.error("[fetchHistory] getLogs failed:", err);
+      return [];
+    }
+  }, []);
 
   // ── Auto-reconnect MetaMask session ───────────────────────────────────────
   useEffect(() => {
@@ -277,7 +306,6 @@ const fetchHistory = useCallback(async (address) => {
       clearError, connectMetaMask, connectDummyWallet,
       generateWallet, disconnectWallet,
       sendPayment, splitPayment, fetchHistory,
-      // Always-fresh balance refresh — safe to call anywhere
       refreshBalance: () => refreshBalance(),
     }}>
       {children}
